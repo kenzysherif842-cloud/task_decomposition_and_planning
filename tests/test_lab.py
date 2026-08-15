@@ -116,6 +116,7 @@ def test_execute_plan_calls_async_only_tools_without_erroring():
     assert final_output(plan, outputs) == outputs["check_stock"]
 
 
+
 class DynamicDecisionLLM:
     """Fakes a planner that immediately decides to call a real tool, then
     reports done. Mirrors RecordingLLM's shape but for dynamic_decomposition's
