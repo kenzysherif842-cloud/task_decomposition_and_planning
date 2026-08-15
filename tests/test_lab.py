@@ -8,6 +8,7 @@ from langchain_core.tools import BaseTool
 from planning_lab.algorithms import (
     Environment,
     deterministic_checks,
+    dynamic_decomposition,
     execute_plan,
     final_output,
     flatten_lats_tree,
@@ -113,6 +114,46 @@ def test_execute_plan_calls_async_only_tools_without_erroring():
     outputs = asyncio.run(execute_plan(plan, llm=None, tools={"get_inventory": tool}))
     assert "Roma Tomatoes" in outputs["check_stock"]
     assert final_output(plan, outputs) == outputs["check_stock"]
+
+
+
+class DynamicDecisionLLM:
+    """Fakes a planner that immediately decides to call a real tool, then
+    reports done. Mirrors RecordingLLM's shape but for dynamic_decomposition's
+    with_structured_output(...).invoke(...) call pattern."""
+    class Structured:
+        def __init__(self, owner):
+            self.owner = owner
+            self.calls = 0
+
+        def invoke(self, messages, **kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                return DynamicDecision(
+                    done=False,
+                    next_task="Check current Roma Tomatoes stock at branch 2",
+                    tool_name="get_inventory",
+                    tool_args={"branch_id": 2, "item_name": "Roma Tomatoes"},
+                )
+            return DynamicDecision(done=True, next_task="")
+
+    def with_structured_output(self, schema, *, method):
+        assert method == "json_schema"
+        if not hasattr(self, "_structured"):
+            self._structured = self.Structured(self)
+        return self._structured
+
+
+def test_dynamic_decomposition_calls_async_only_tools_without_erroring():
+    tool = AsyncOnlyTool()
+    history = asyncio.run(dynamic_decomposition(
+        "Check stock and report it back",
+        DynamicDecisionLLM(),
+        tools={"get_inventory": tool},
+        tool_descriptions="- get_inventory: looks up current stock for an item.",
+    ))
+    assert len(history) == 1
+    assert "Roma Tomatoes" in history[0][1]
 
 
 def test_grounded_checks_are_deterministic():

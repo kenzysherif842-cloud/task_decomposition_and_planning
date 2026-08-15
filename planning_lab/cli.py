@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import os
 import sys
@@ -57,7 +58,7 @@ def save_artifact(payload: dict) -> Path:
     return path
 
 
-def main() -> None:
+async def main() -> None:
     # Mistral may return arrows, em dashes, or other characters that Windows'
     # legacy cp1252 console cannot encode. UTF-8 keeps CLI output portable.
     if hasattr(sys.stdout, "reconfigure"):
@@ -78,7 +79,7 @@ def main() -> None:
     if args.mode == "dag":
         plan = decompose_goal(args.goal, llm)
         print("Execution batches:", plan.execution_batches())
-        outputs = execute_plan(plan, llm)
+        outputs = await execute_plan(plan, llm)
         draft = final_output(plan, outputs)
         reflection = reflect_and_refine(args.goal, draft, llm) if not args.no_reflection else None
         result = reflection.revised if reflection else draft
@@ -90,7 +91,7 @@ def main() -> None:
                 "revised": reflection.revised != reflection.draft,
             }
     elif args.mode == "dynamic":
-        history = dynamic_decomposition(args.goal, llm)
+        history = await dynamic_decomposition(args.goal, llm)
         result = history[-1][1] if history else "Planner reported the goal was already complete."
         payload.update(history=history, result=result)
     elif args.mode == "ps":
@@ -136,4 +137,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
