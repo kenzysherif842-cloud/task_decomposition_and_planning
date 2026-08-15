@@ -56,7 +56,7 @@ handles — never set it for tasks that require judgment, comparison, or synthes
     return Plan.model_validate(payload)
 
 
-def execute_plan(
+async def execute_plan(
     plan: Plan,
     llm: BaseChatModel,
     tools: dict[str, "BaseTool"] | None = None,
@@ -83,10 +83,13 @@ def execute_plan(
                 Complete only the current task. Be concrete and concise. Do not invent sources."""
 
         # Real tool calls first — deterministic, no LLM guessing involved.
+        # NOTE: MCP tools from langchain_mcp_adapters only implement async
+        # execution (ainvoke). Calling .invoke() on them raises
+        # NotImplementedError: StructuredTool does not support sync invocation.
         for task_id, tool_name in tool_tasks.items():
             task = plan.task(task_id)
             tool = tools[tool_name]
-            result = tool.invoke(task.tool_args)
+            result = await tool.ainvoke(task.tool_args)
             outputs[task_id] = str(result).strip()
 
         # Reasoning-only tasks go through the LLM exactly as before.
