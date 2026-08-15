@@ -9,7 +9,7 @@ class DynamicDecision(BaseModel):
     tool_name: str | None = None
     tool_args: dict = {}
 
-def dynamic_decomposition(
+async def dynamic_decomposition(
     goal: str,
     llm: BaseChatModel,
     tools: dict[str, "BaseTool"] | None = None,
@@ -43,9 +43,12 @@ When done is true, use an empty string for next_task."""),
         if not task:
             raise ValueError(f"Dynamic planner omitted next_task at step {step + 1}")
 
+        # Real tool calls use ainvoke — MCP tools from langchain_mcp_adapters
+        # only implement async execution. Calling .invoke() on them raises
+        # NotImplementedError: StructuredTool does not support sync invocation.
         if decision.tool_name and decision.tool_name in tools:
             tool = tools[decision.tool_name]
-            result = str(tool.invoke(decision.tool_args)).strip()
+            result = str(await tool.ainvoke(decision.tool_args)).strip()
         else:
             response = llm.invoke([
                 ("system", "Execute the next adaptive sub-task using the observations provided."),
