@@ -1,11 +1,14 @@
+import asyncio
 import random
 from types import SimpleNamespace
 
 import pytest
+from langchain_core.tools import BaseTool
 
 from planning_lab.algorithms import (
     Environment,
     deterministic_checks,
+    dynamic_decomposition,
     execute_plan,
     final_output,
     flatten_lats_tree,
@@ -68,9 +71,88 @@ def test_executor_passes_dependency_outputs():
         ],
     })
     llm = RecordingLLM()
-    outputs = execute_plan(plan, llm)
+    outputs = asyncio.run(execute_plan(plan, llm))
     assert "Completed Current task: Collect useful evidence" in llm.prompts[1]
     assert final_output(plan, outputs) == outputs["b"]
+
+
+class AsyncOnlyTool(BaseTool):
+    """Mimics a real MCP tool: only ainvoke works, .invoke() must fail.
+    This is exactly what langchain_mcp_adapters' StructuredTool does when
+    it wraps a tool from the real MCP server — calling .invoke() on it
+    raises NotImplementedError. This test exists to catch a regression
+    back to the old sync `tool.invoke(...)` call in execute_plan(), which
+    is what broke the real agent run against the live MCP server
+    (NotImplementedError: StructuredTool does not support sync invocation).
+    """
+    name: str = "get_inventory"
+    description: str = "Fake stand-in for the real get_inventory MCP tool."
+
+    def _run(self, *args, **kwargs):
+        raise NotImplementedError("StructuredTool does not support sync invocation.")
+
+    async def _arun(self, *args, **kwargs):
+        return {"item": "Roma Tomatoes", "current_quantity": 4.5}
+
+
+def test_execute_plan_calls_async_only_tools_without_erroring():
+    plan = Plan.model_validate({
+        "goal": "Check stock and report it back",
+        "tasks": [
+            {
+                "id": "check_stock",
+                "instruction": "Check current Roma Tomatoes stock at branch 2",
+                "depends_on": [],
+                "tool_name": "get_inventory",
+                "tool_args": {"branch_id": 2, "item_name": "Roma Tomatoes"},
+            },
+        ],
+    })
+    tool = AsyncOnlyTool()
+    # llm=None is safe here: this plan has no reasoning-only tasks, so
+    # execute_plan never touches the llm argument — only the tool path runs.
+    outputs = asyncio.run(execute_plan(plan, llm=None, tools={"get_inventory": tool}))
+    assert "Roma Tomatoes" in outputs["check_stock"]
+    assert final_output(plan, outputs) == outputs["check_stock"]
+
+
+class DynamicDecisionLLM:
+    """Fakes a planner that immediately decides to call a real tool, then
+    reports done. Mirrors RecordingLLM's shape but for dynamic_decomposition's
+    with_structured_output(...).invoke(...) call pattern."""
+    class Structured:
+        def __init__(self, owner):
+            self.owner = owner
+            self.calls = 0
+
+        def invoke(self, messages, **kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                return DynamicDecision(
+                    done=False,
+                    next_task="Check current Roma Tomatoes stock at branch 2",
+                    tool_name="get_inventory",
+                    tool_args={"branch_id": 2, "item_name": "Roma Tomatoes"},
+                )
+            return DynamicDecision(done=True, next_task="")
+
+    def with_structured_output(self, schema, *, method):
+        assert method == "json_schema"
+        if not hasattr(self, "_structured"):
+            self._structured = self.Structured(self)
+        return self._structured
+
+
+def test_dynamic_decomposition_calls_async_only_tools_without_erroring():
+    tool = AsyncOnlyTool()
+    history = asyncio.run(dynamic_decomposition(
+        "Check stock and report it back",
+        DynamicDecisionLLM(),
+        tools={"get_inventory": tool},
+        tool_descriptions="- get_inventory: looks up current stock for an item.",
+    ))
+    assert len(history) == 1
+    assert "Roma Tomatoes" in history[0][1]
 
 
 def test_grounded_checks_are_deterministic():
