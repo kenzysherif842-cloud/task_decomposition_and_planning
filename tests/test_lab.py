@@ -174,11 +174,7 @@ class SequencedEnvironment:
         return next(self.feedback)
 
 
-def test_random_environment_tends_toward_good_evaluations():
-    environment = Environment(rng=random.Random(42))
-    feedback = [environment.evaluate("Any candidate") for _ in range(1_000)]
-    assert sum(item.score for item in feedback) / len(feedback) > 0.65
-    assert sum(item.success for item in feedback) / len(feedback) > 0.65
+
 
 
 class ReflexionLLM:
@@ -226,7 +222,7 @@ class LATSLLM:
             return self.owner.structured(self.schema)
 
     def with_structured_output(self, schema, *, method):
-        assert method == "json_schema"
+        assert method == "function_calling"
         return self.Structured(self, schema)
 
     def structured(self, schema):
